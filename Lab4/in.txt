@@ -1,0 +1,5 @@
+S -> BA
+A -> +BA | epsilon
+B -> DC
+C -> *DC | epsilon
+D -> (S) | a

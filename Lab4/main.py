@@ -1,3 +1,4 @@
+from collections import deque
 import re
 import itertools
 
@@ -15,6 +16,9 @@ class Terminal:
     def __str__(self) -> str:
         return self.text
 
+    def __repr__(self) -> str:
+        return self.text
+
     def __eq__(self, o: object) -> bool:
         return self.text == o.text
 
@@ -29,6 +33,9 @@ class NonTerminal:
         self.rules = []
 
     def __str__(self) -> str:
+        return self.text
+
+    def __repr__(self) -> str:
         return self.text
 
     def __eq__(self, o: object) -> bool:
@@ -154,7 +161,171 @@ class Grammar:
 
         return rules
 
+class FirstFollow:
+    def __init__(self, grammar) -> None:
+        self.grammar = grammar
+
+    def compute_first_k(self, k):
+        first = {}
+        prev_first = {}
+        # Initialize the first set for each non-terminal in the grammar to be empty.
+        for n in self.grammar.non_terminals:
+            first[n] = set()
+        # Loop until the first set no longer changes between iterations.
+        while first != prev_first:
+            prev_first = first.copy()
+            # Create a value copy of each set in the dictionary to avoid modifying the original sets during iteration.
+            for key, value in prev_first.items():
+                prev_first[key] = value.copy()
+            for n in self.grammar.non_terminals:
+                for rule in n.rules:
+                    # Calculate possible strings of length k or less from the rule using the current first set.
+                    possible_strings = self.get_possible_strings(rule, k, first)
+                    # Update the first set of the non-terminal by adding the new possible strings.
+                    first[n] |= set(possible_strings)
+
+        return first
+
+    def compute_follow_k(self, k, first_k):
+        follow = {}
+        prev_follow = {}
+        # Initialize the follow set for each non-terminal in the grammar.
+        for n in self.grammar.non_terminals:
+            follow[n] = set()
+        # For the start symbol, add epsilon to its follow set.
+        follow[self.grammar.non_terminals[0]].add((self.grammar.get_epsilon(),))
+
+        # Initialize a set to track which non-terminals have been seen.
+        seen_nonterminals = set()
+        # Add the start symbol to the seen non-terminals set.
+        seen_nonterminals.add(self.grammar.non_terminals[0])
+
+        # Loop until the follow set no longer changes between iterations.
+        while follow != prev_follow:
+            prev_follow = follow.copy()
+            for key, value in prev_follow.items():
+                # Create a value copy of each set in the dictionary to
+                # avoid modifying the original sets during iteration.
+                prev_follow[key] = value.copy()
+
+            # Store newly seen non-terminals during this iteration.
+            new_seen_non_terminals = []
+            for nt in seen_nonterminals:
+                for rule in nt.rules:
+                    for i, c in enumerate(rule):
+                        # Only process non-terminal symbols.
+                        if isinstance(c, NonTerminal):
+                            # Add the non-terminal to the buffer of newly seen non-terminals.
+                            new_seen_non_terminals.append(c)
+                            # Get the symbols following the current non-terminal in the rule.
+                            after = rule[i + 1:]
+                            # Calculate the first set of the string following the current non-terminal.
+                            first_of_after = self.concatenate_k(k, [ps[:k] for ps in
+                                                               self.get_possible_strings(after, k, first_k)],
+                                                           follow[nt])
+                            # Update the follow set of the current non-terminal.
+                            for s in first_of_after:
+                                if len(s) == 0:
+                                    # If the string is empty, add epsilon.
+                                    follow[c].add((self.grammar.get_epsilon(),))
+                                else:
+                                    follow[c].add(s)
+
+            seen_nonterminals |= set(new_seen_non_terminals)
+
+        return follow
+
+    def concatenate_k(self, k, first_set, second_set):
+        result = set()
+        for s1 in first_set:
+            for s2 in second_set:
+                # Check if all symbols in s1 and s2 are empty (epsilon).
+                s1_empty = all(c.is_empty() for c in s1)
+                s2_empty = all(c.is_empty() for c in s2)
+                # If both strings are empty, add an epsilon to the result set.
+                if s1_empty and s2_empty:
+                    result.add((self.grammar.get_epsilon(),))
+                    continue
+                # If only the first string is empty, add the second string to the result set.
+                elif s1_empty:
+                    result.add(s2)
+                    continue
+                # If only the second string is empty, add the first string to the result set.
+                elif s2_empty:
+                    result.add(s1)
+                    continue
+                # Concatenate the two strings and add the result to the result set.
+                result.add((s1 + s2)[:k])
+        return result
+
+    def get_possible_strings(self, rule, k, prev_first_k):
+        possible_strings = []
+        queue = deque()
+        # Start with the original rule.
+        queue.append(list(rule))
+        while queue:
+            # Take the first item from the queue for processing.
+            current_rule = queue.popleft()
+            # Check if the first k symbols are all terminals or empty.
+            if all(isinstance(c, Terminal) for c in current_rule[:k]):
+                if all(nt_c.is_empty() for nt_c in current_rule[:k]):
+                    # If all symbols are empty, add epsilon to possible strings.
+                    possible_strings.append((self.grammar.get_epsilon(),))
+                else:
+                    # Add the first k terminals as a possible string.
+                    possible_strings.append(tuple(current_rule[:k]))
+                continue
+            # Iterate through each symbol in the current rule.
+            for i, c in enumerate(current_rule):
+                # Process only non-terminal symbols.
+                if isinstance(c, NonTerminal):
+                    # For each possible first set of the non-terminal, create a new rule variant.
+                    for nt_first in prev_first_k[c]:
+                        new_rule = current_rule.copy()
+                        # Check if all symbols in the first set of non-terminal are empty.
+                        is_prev_first_empty = all(nt_c.is_empty() for nt_c in nt_first)
+                        # Handle empty symbols in non-terminal expansions.
+                        if is_prev_first_empty and len(current_rule) > 1:
+                            # If the first set is empty and rule is not a single symbol, remove the non-terminal.
+                            new_rule[i:i + 1] = []
+                        else:
+                            # Replace the non-terminal with its first set.
+                            new_rule[i:i + 1] = nt_first
+                        # Add the new rule variant to the queue for further processing.
+                        queue.append(new_rule)
+                    break
+        return possible_strings
+
+    @staticmethod
+    def tuples_to_strings(table):
+        result = {}
+        for key, value in table.items():
+            result[key] = set()
+            for v in value:
+                result[key].add(''.join([str(c) for c in v]))
+        return result
+
+
+def view_result(grammar, expression):
+    first_follow = FirstFollow(grammar)
+    first_k = first_follow.compute_first_k(2)
+    follow_k = first_follow.compute_follow_k(1, first_k)
+    print("Terminals:")
+    print(grammar.terminals)
+    print("Non-Terminals:")
+    print(grammar.non_terminals)
+    print("Epsilon-Producers:")
+    print(grammar.epsilon_producers)
+    print("First(k):")
+    for n in grammar.non_terminals:
+        print(str(n) + ":")
+        print(', '.join(''.join(map(str, tupl)) for tupl in first_k[n]))
+    print("Follow(k):")
+    for n in grammar.non_terminals:
+        print(str(n) + ":")
+        print(', '.join(''.join(map(str, tupl)) for tupl in follow_k[n]))
 
 if __name__ == "__main__":
-    print("TEST 1:")
-    grammar = Grammar(Grammar.read_grammar_from_file("in.txt"))
+    example_grammar = Grammar(Grammar.read_grammar_from_file("in.txt"))
+    example_expression = ""
+    view_result(example_grammar, example_expression)
