@@ -382,6 +382,52 @@ class ConstructParsingTable:
             else:
                 raise ValueError(f"Grammar is not LL(1): Conflict at ({non_terminal}, {terminal})")
 
+
+class RecursiveDescentParser:
+    def __init__(self, grammar):
+        self.grammar = grammar
+        self.tokens = []
+        self.index = 0
+
+    def parse(self, input_str):
+        # Convert input string into tokens based on the grammar
+        self.tokens = [c.text for c in self.grammar.get_tnt_string(input_str)]
+        self.index = 0
+        # Start symbol is the first non-terminal in grammar
+        start_symbol = self.grammar.non_terminals[0]
+        # Check if the entire token list can be parsed from the start symbol
+        return self.parse_non_terminal(start_symbol) and self.index == len(self.tokens)
+
+    def parse_non_terminal(self, non_terminal):
+        save_index = self.index
+        # Try each rule of the non-terminal to see if it matches the tokens
+        for rule in non_terminal.rules:
+            self.index = save_index  # Reset index to try next rule
+            if all(self.parse_symbol(symbol) for symbol in rule):
+                return True  # Successful parsing of this non-terminal
+        self.index = save_index
+        return False  # This non-terminal can't be parsed
+
+    def parse_symbol(self, symbol):
+        if isinstance(symbol, Terminal):
+            if symbol.is_empty():
+                return True
+            # Match terminal with current token
+            return self.match(symbol.text)
+        elif isinstance(symbol, NonTerminal):
+            # Recursive parsing for non-terminal
+            return self.parse_non_terminal(symbol)
+        # If symbol type is unrecognized, return False
+        return False
+
+    def match(self, terminal):
+        # Check if the current token matches the terminal
+        if self.index < len(self.tokens) and self.tokens[self.index] == terminal:
+            self.index += 1
+            return True  # Successful match
+        return False
+
+
 def parse_with_control_table(grammar, expression):
     first_follow = FirstFollow(grammar)
     first_k = first_follow.compute_first_k(1)
@@ -394,7 +440,8 @@ def parse_with_control_table(grammar, expression):
         joined_value = ''.join(map(str, value))
         print(f"{str(key[0])} -> {'ε' if not joined_value else joined_value}")
         print("")
-
+    recursive_parser = RecursiveDescentParser(grammar)
+    print(f'Recursive Descent Parsing "{expression}": {recursive_parser.parse(expression)}')
 
 def view_result(grammar, expression):
     first_follow = FirstFollow(grammar)
@@ -419,5 +466,5 @@ def view_result(grammar, expression):
 
 if __name__ == "__main__":
     example_grammar = Grammar(Grammar.read_grammar_from_file("in.txt"))
-    example_expression = ""
+    example_expression = "(a)"
     view_result(example_grammar, example_expression)
