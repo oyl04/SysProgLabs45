@@ -7,7 +7,7 @@ class Terminal:
     def __init__(self, text):
         self.text = text
         if self.is_empty():  # Replace the text with 'eps' if it represents an empty terminal
-            self.text = 'eps'
+            self.text = 'ε'
 
     # Check if the terminal symbol is an epsilon (empty symbol).
     def is_empty(self):
@@ -161,6 +161,18 @@ class Grammar:
 
         return rules
 
+    def get_tnt_string(self, text):
+        result = []
+        for m in re.finditer(self.regex, text):
+            if m.group(1):
+                # Append the corresponding non-terminal object to the result
+                result.append(next((nt for nt in self.non_terminals if nt.text == m.group(1))))
+            elif m.group(2):
+                # Append the corresponding terminal object to the result
+                result.append(next((t for t in self.terminals if t.text == m.group(2))))
+        return result
+
+
 class FirstFollow:
     def __init__(self, grammar) -> None:
         self.grammar = grammar
@@ -221,8 +233,8 @@ class FirstFollow:
                             after = rule[i + 1:]
                             # Calculate the first set of the string following the current non-terminal.
                             first_of_after = self.concatenate_k(k, [ps[:k] for ps in
-                                                               self.get_possible_strings(after, k, first_k)],
-                                                           follow[nt])
+                                                                    self.get_possible_strings(after, k, first_k)],
+                                                                follow[nt])
                             # Update the follow set of the current non-terminal.
                             for s in first_of_after:
                                 if len(s) == 0:
@@ -306,6 +318,84 @@ class FirstFollow:
         return result
 
 
+class ConstructParsingTable:
+    def __init__(self, grammar, first_sets, follow_sets):
+        self.grammar = grammar
+        self.first_sets = first_sets
+        self.follow_sets = follow_sets
+        self.parsing_table = {}
+
+    def construct(self):
+        # Construct the parsing table for each non-terminal and its productions.
+        for non_terminal, productions in self.grammar.rules.items():
+            for production in productions:
+                # Find the first set for the production.
+                first_production = self._find_first_production(production)
+                # Add rules to the parsing table based on the first set.
+                for terminal_tuple in first_production:
+                    terminal = terminal_tuple[0]
+                    if terminal != Terminal('ε'):
+                        self._add_to_parsing_table(non_terminal, terminal, production)
+                # Process productions that can derive epsilon.
+                if (Terminal('ε'),) in first_production:
+                    self._process_epsilon(non_terminal, production)
+
+        return self.parsing_table
+
+    def _find_first_production(self, production):
+        first_production = set()
+        # Convert the production into a list of symbol texts.
+        production = [c.text for c in Grammar.get_tnt_string(self.grammar, production)]
+
+        for t_symbol in production:
+            # Determine if the symbol is a terminal or non-terminal.
+            symbol = Terminal(t_symbol) if Terminal(t_symbol) in self.grammar.terminals else NonTerminal(t_symbol)
+            # Get the first set of the symbol.
+            first_symbol = self.first_sets[symbol] if symbol in self.first_sets else {(symbol,)}
+
+            if (Terminal('ε'),) not in first_symbol:
+                first_production.update(first_symbol)
+            # Stop if the symbol cannot derive epsilon.
+            if (Terminal('ε'),) not in first_symbol:
+                break
+        else:
+            # Add epsilon if all symbols in the production can derive epsilon.
+            first_production.add((Terminal('ε'),))
+        return first_production
+
+    def _add_to_parsing_table(self, non_terminal, terminal, production):
+        # Add a rule to the parsing table.
+        production = [c.text for c in Grammar.get_tnt_string(self.grammar, production)]
+        # Check for conflicts in the parsing table.
+        if (non_terminal, terminal) not in self.parsing_table:
+            self.parsing_table[(non_terminal, terminal)] = production
+        else:
+            raise ValueError(f"Grammar is not LL(1): Conflict at ({non_terminal}, {terminal})")
+
+    def _process_epsilon(self, non_terminal, production):
+        # Process productions that can derive epsilon.
+        production = [c.text for c in Grammar.get_tnt_string(self.grammar, production)]
+        # Use the follow set of the non-terminal to add rules for deriving epsilon.
+        for terminal in self.follow_sets[NonTerminal(non_terminal)]:
+            if (non_terminal, terminal[0]) not in self.parsing_table:
+                self.parsing_table[(non_terminal, terminal[0])] = production
+            else:
+                raise ValueError(f"Grammar is not LL(1): Conflict at ({non_terminal}, {terminal})")
+
+def parse_with_control_table(grammar, expression):
+    first_follow = FirstFollow(grammar)
+    first_k = first_follow.compute_first_k(1)
+    follow_k = first_follow.compute_follow_k(1, first_k)
+    parser = ConstructParsingTable(grammar, first_k, follow_k)
+    table = parser.construct()
+    print("Parser control table:")
+    for key, value in table.items():
+        print(str(key) + ":")
+        joined_value = ''.join(map(str, value))
+        print(f"{str(key[0])} -> {'ε' if not joined_value else joined_value}")
+        print("")
+
+
 def view_result(grammar, expression):
     first_follow = FirstFollow(grammar)
     first_k = first_follow.compute_first_k(2)
@@ -324,6 +414,8 @@ def view_result(grammar, expression):
     for n in grammar.non_terminals:
         print(str(n) + ":")
         print(', '.join(''.join(map(str, tupl)) for tupl in follow_k[n]))
+    parse_with_control_table(grammar, expression)
+
 
 if __name__ == "__main__":
     example_grammar = Grammar(Grammar.read_grammar_from_file("in.txt"))
