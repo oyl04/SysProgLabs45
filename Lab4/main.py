@@ -208,9 +208,9 @@ class FirstFollow:
         follow[self.grammar.non_terminals[0]].add((self.grammar.get_epsilon(),))
 
         # Initialize a set to track which non-terminals have been seen.
-        seen_nonterminals = set()
+        seen_non_terminals = set()
         # Add the start symbol to the seen non-terminals set.
-        seen_nonterminals.add(self.grammar.non_terminals[0])
+        seen_non_terminals.add(self.grammar.non_terminals[0])
 
         # Loop until the follow set no longer changes between iterations.
         while follow != prev_follow:
@@ -222,7 +222,7 @@ class FirstFollow:
 
             # Store newly seen non-terminals during this iteration.
             new_seen_non_terminals = []
-            for nt in seen_nonterminals:
+            for nt in seen_non_terminals:
                 for rule in nt.rules:
                     for i, c in enumerate(rule):
                         # Only process non-terminal symbols.
@@ -243,7 +243,7 @@ class FirstFollow:
                                 else:
                                     follow[c].add(s)
 
-            seen_nonterminals |= set(new_seen_non_terminals)
+            seen_non_terminals |= set(new_seen_non_terminals)
 
         return follow
 
@@ -383,6 +383,92 @@ class ConstructParsingTable:
                 raise ValueError(f"Grammar is not LL(1): Conflict at ({non_terminal}, {terminal})")
 
 
+class LLkAnalyzer:
+    def __init__(self, parsing_table, grammar):
+        self.parsing_table = parsing_table
+        self.grammar = grammar
+        self.start_symbol = self.grammar.non_terminals[0]
+
+    def str_to_sym(self, sym):
+        if Terminal(sym) in self.grammar.terminals:
+            return Terminal(sym)
+        else:
+            return NonTerminal(sym)
+
+    def parse(self, tokens):
+        tokens.append('$')  # Append end marker to the token list
+        applied_rules = []
+        stack = ['$', self.start_symbol]  # Initialize stack with end marker and start symbol
+
+        current_token_index = 0
+        step = 0
+        while len(stack) > 0:
+            print(f"Step #{step}")
+            step += 1
+            print(list(reversed(stack)))
+            print(tokens[current_token_index:])
+            top = stack.pop()
+            # Prints for current stack, top element, and remaining tokens
+
+            if isinstance(top, Terminal):
+                #  Match terminal symbol with current token
+                if top == tokens[current_token_index]:
+                    current_token_index += 1
+                else:
+                    raise SyntaxError(f"Unexpected token: Expected {top}, found {tokens[current_token_index]}")
+            elif isinstance(top, NonTerminal):
+                #  Process non-terminal
+                #  Special processing when the current token is the end marker '$'
+                if isinstance(tokens[current_token_index], str) and tokens[current_token_index] == '$':
+                    #  Look up in the parsing table for an entry with the non-terminal and epsilon
+                    entry = self.parsing_table.get((str(top), Terminal('ε')))
+                    #  If an entry is found, it means the non-terminal can be replaced with epsilon
+                    if entry is not None:
+                        applied_rules.append((str(top), Terminal('ε'), entry))
+                        for symbol in reversed(entry):
+                            if symbol == 'ε':
+                                continue
+                            stack.append(self.str_to_sym(symbol))
+                        continue
+                # If an entry is found in the parsing table, it means there is a rule that can be applied
+                # for the current non-terminal (top of the stack) and the current input token.
+                entry = self.parsing_table.get((str(top), tokens[current_token_index]))
+                if entry is not None:
+                    applied_rules.append((str(top), tokens[current_token_index], entry))
+                    # Iterate through the symbols in the found rule in reverse order.
+                    for symbol in reversed(entry):
+                        # If the symbol is epsilon -> we do not need to match any input token,
+                        # so we can skip it.
+                        if symbol == 'ε':
+                            continue
+                        # For other symbols, convert them to terminals or non-terminals and push them onto the stack.
+                        stack.append(self.str_to_sym(symbol))
+                else:
+                    # If no entry is found in the parsing table, it means there is no valid rule for the current
+                    raise SyntaxError(f"No rule to parse: {top} with token {tokens[current_token_index]}")
+            # This condition checks if we have reached the end of the stack.
+            elif top == '$':
+                if tokens[current_token_index] == '$':
+                    print("Parsing successful!")
+                # If the current token is also the end marker '$', it means the input string
+                # has been successfully parsed according to the grammar rules.
+                else:
+                    raise SyntaxError("Unexpected end of input")
+
+            else:
+                raise ValueError(f"Invalid symbol on stack: {top}")
+
+        if current_token_index < len(tokens) - 1:
+            raise SyntaxError("Input not fully parsed")
+
+        terminalized = []
+        #  Convert applied rules to terminals and non-terminals
+        for rule in applied_rules:
+            func = lambda x: list(map(self.str_to_sym, x))
+            terminalized.append((func(rule[0]), rule[1], func(rule[2])))
+        return terminalized
+
+
 class RecursiveDescentParser:
     def __init__(self, grammar):
         self.grammar = grammar
@@ -442,6 +528,18 @@ def parse_with_control_table(grammar, expression):
         print("")
     recursive_parser = RecursiveDescentParser(grammar)
     print(f'Recursive Descent Parsing "{expression}": {recursive_parser.parse(expression)}')
+    print("Analyzer process:")
+    applied_rules = None
+    try:
+        analyzer = LLkAnalyzer(table, grammar)
+        tokenized = grammar.get_tnt_string(expression)
+        applied_rules = analyzer.parse(tokenized)
+    except SyntaxError as se:
+        print(f"Got an error: {str(se)}")
+    except ValueError as ve:
+        print(f"Got an error: {str(ve)}")
+    return applied_rules
+
 
 def view_result(grammar, expression):
     first_follow = FirstFollow(grammar)
@@ -456,15 +554,15 @@ def view_result(grammar, expression):
     print("First(k):")
     for n in grammar.non_terminals:
         print(str(n) + ":")
-        print(', '.join(''.join(map(str, tupl)) for tupl in first_k[n]))
+        print(', '.join(''.join(map(str, sym)) for sym in first_k[n]))
     print("Follow(k):")
     for n in grammar.non_terminals:
         print(str(n) + ":")
-        print(', '.join(''.join(map(str, tupl)) for tupl in follow_k[n]))
+        print(', '.join(''.join(map(str, sym)) for sym in follow_k[n]))
     parse_with_control_table(grammar, expression)
 
 
 if __name__ == "__main__":
     example_grammar = Grammar(Grammar.read_grammar_from_file("in.txt"))
-    example_expression = "(a)"
+    example_expression = "(a+a)*a"
     view_result(example_grammar, example_expression)
