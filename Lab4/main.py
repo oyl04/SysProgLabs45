@@ -29,8 +29,8 @@ class Terminal:
 class NonTerminal:
     def __init__(self, text):
         self.text = text
-        # A list to hold production rules for this non-terminal.
-        self.rules = []
+        # A list to hold production productions for this non-terminal.
+        self.productions = []
 
     def __str__(self) -> str:
         return self.text
@@ -47,15 +47,15 @@ class NonTerminal:
 
 class Grammar:
 
-    def __init__(self, rules):
-        self.regex = None
+    def __init__(self, productions):
+        self.pattern = None
         self.terminals = []
         self.non_terminals = []
-        # Process the given rules to populate terminals and non-terminals.
-        self.get_rules(rules)
-        self.rules = rules
+        # Process the given productions to populate terminals and non-terminals.
+        self.get_productions(productions)
+        self.productions = productions
         # Identify non-terminals that can produce an epsilon (empty string).
-        self.epsilon_producers = self.find_epsilon_producing_non_terminals()
+        self.nullable_non_terminals = self.find_epsilon_producing_non_terminals()
 
     def get_epsilon(self):
         # Find a terminal representing an epsilon.
@@ -66,23 +66,23 @@ class Grammar:
 
     @staticmethod
     # Generate a regex pattern to identify terminals and non-terminals in text.
-    def get_regex(text_set):
+    def get_pattern(text_set):
         return f"({'|'.join(sorted([re.escape(t.text) for t in text_set], key=lambda x: len(x), reverse=True))})"
 
-    # Process the given rules to populate terminals and non-terminals.
-    def get_rules(self, rules):
-        # Add non-terminals defined in the rules to the grammar's non_terminals list.
-        self.non_terminals += [NonTerminal(n) for n in list(rules.keys())]
+    # Process the given productions to populate terminals and non-terminals.
+    def get_productions(self, productions):
+        # Add non-terminals defined in the productions to the grammar's non_terminals list.
+        self.non_terminals += [NonTerminal(n) for n in list(productions.keys())]
         # Create a regular expression pattern to identify non-terminals.
-        n_regex = Grammar.get_regex(self.non_terminals)
+        n_pattern = Grammar.get_pattern(self.non_terminals)
 
         terminals = set()
         for n in self.non_terminals:
-            for nt_rule in rules[n.text]:
-                # Split each production rule and identify terminals.
-                g = nt_rule.split()
+            for nt_production in productions[n.text]:
+                # Split each rule production and identify terminals.
+                g = nt_production.split()
                 # Add identified terminals to the set.
-                t = [re.sub(n_regex, ' ', p).split() for p in g]
+                t = [re.sub(n_pattern, ' ', p).split() for p in g]
                 terminals |= set(itertools.chain.from_iterable(t))
         # Create Terminal objects for each identified terminal symbol.
         self.terminals = [Terminal(term) for term in terminals]
@@ -90,31 +90,31 @@ class Grammar:
         print(self.terminals, self.non_terminals)
 
         # Create a regular expression pattern to identify terminals.
-        t_regex = Grammar.get_regex(self.terminals)
+        t_pattern = Grammar.get_pattern(self.terminals)
 
         # Combine the terminal and non-terminal patterns into a single pattern.
-        nt_regex = f"{n_regex}|{t_regex}"
-        self.regex = nt_regex
+        nt_pattern = f"{n_pattern}|{t_pattern}"
+        self.pattern = nt_pattern
 
-        # Process each rule for each non-terminal and store in their 'rules' attribute.
+        # Process each production for each non-terminal and store in their 'productions' attribute.
         for n in self.non_terminals:
-            for nt_rule in rules[n.text]:
-                n.rules.append([])
-                for m in re.finditer(nt_regex, nt_rule):
-                    # Depending on whether the match is a terminal or non-terminal, add it to the rule.
+            for nt_production in productions[n.text]:
+                n.productions.append([])
+                for m in re.finditer(nt_pattern, nt_production):
+                    # Depending on whether the match is a terminal or non-terminal, add it to the production.
                     if m.group(1):
-                        n.rules[-1].append(next((nt for nt in self.non_terminals if nt.text == m.group(1))))
+                        n.productions[-1].append(next((nt for nt in self.non_terminals if nt.text == m.group(1))))
                     elif m.group(2):
-                        n.rules[-1].append(next((t for t in self.terminals if t.text == m.group(2))))
+                        n.productions[-1].append(next((t for t in self.terminals if t.text == m.group(2))))
 
     def find_epsilon_producing_non_terminals(self):
-        epsilon_producers = set()
-        # Check each non-terminal's production rules.
+        nullable_non_terminals = set()
+        # Check each non-terminal's production productions.
         for nt in self.non_terminals:
-            for production in nt.rules:
+            for production in nt.productions:
                 # If any production of a non-terminal directly produces an epsilon, add it to the set.
                 if any(isinstance(symbol, Terminal) and symbol.is_empty() for symbol in production):
-                    epsilon_producers.add(nt)
+                    nullable_non_terminals.add(nt)
                     break
 
         # Continuously check for non-terminals that can indirectly produce an epsilon.
@@ -122,48 +122,48 @@ class Grammar:
         while changed:
             changed = False
             for nt in self.non_terminals:
-                if nt in epsilon_producers:
+                if nt in nullable_non_terminals:
                     continue
-                for production in nt.rules:
+                for production in nt.productions:
                     # If all symbols in a production are epsilon producers or empty terminals, add the non-terminal.
-                    if all(symbol in epsilon_producers or (isinstance(symbol, Terminal) and symbol.is_empty()) for
+                    if all(symbol in nullable_non_terminals or (isinstance(symbol, Terminal) and symbol.is_empty()) for
                            symbol in production):
-                        epsilon_producers.add(nt)
+                        nullable_non_terminals.add(nt)
                         changed = True
                         break
 
-        return epsilon_producers
+        return nullable_non_terminals
 
-    # Method to read grammar rules from a file.
+    # Method to read grammar productions from a file.
     @staticmethod
     def read_grammar_from_file(file_path):
-        rules = {}
+        productions = {}
 
         with open(file_path, 'r') as file:
             for line in file:
-                # Split each line at the '->' symbol to separate the left and right parts of the production rule.
+                # Split each line at the '->' symbol to separate the left and right parts of the rule production.
                 parts = line.strip().split('->')
                 if len(parts) == 2:
                     left, right = parts
-                    # Trim whitespace from the left-hand side (non-terminal) of the rule.
+                    # Trim whitespace from the left-hand side (non-terminal) of the production.
                     left = left.strip()
                     # Split the right-hand side of the rule into individual productions using '|' as the delimiter.
                     right_productions = right.strip().split("|")
-                    # If the non-terminal is not already in the rules dictionary, add it with its productions.
+                    # If the non-terminal is not already in the productions dictionary, add it with its productions.
                     # Otherwise, extend its list of productions with the new ones.
-                    if left not in rules:
-                        rules[left] = right_productions
+                    if left not in productions:
+                        productions[left] = right_productions
                     else:
-                        rules[left].extend(right_productions)
+                        productions[left].extend(right_productions)
 
-        for key in rules.keys():
-            rules[key] = ['ε' if prod == 'epsilon' else prod for prod in rules[key]]
+        for key in productions.keys():
+            productions[key] = ['ε' if prod == 'epsilon' else prod for prod in productions[key]]
 
-        return rules
+        return productions
 
     def get_tnt_string(self, text):
         result = []
-        for m in re.finditer(self.regex, text):
+        for m in re.finditer(self.pattern, text):
             if m.group(1):
                 # Append the corresponding non-terminal object to the result
                 result.append(next((nt for nt in self.non_terminals if nt.text == m.group(1))))
@@ -171,6 +171,27 @@ class Grammar:
                 # Append the corresponding terminal object to the result
                 result.append(next((t for t in self.terminals if t.text == m.group(2))))
         return result
+
+    def build_ast(self, rule_sequence):
+        root = ASTNode(self.non_terminals[0])
+        stack = [root]
+        for rule in rule_sequence:
+            # Unpack the rule into non-terminal, token, and production.
+            nt, _, prod = rule
+            nt = nt[0]
+            curr_node = stack.pop()
+            if curr_node.symbol == nt:
+                # Iterate over the production in reverse order.
+                # This is because we want to process children from left to right, and the stack is LIFO.
+                for c in prod[::-1]:
+                    # For each symbol in the production, create a new AST node and add it as a child.
+                    if isinstance(c, Terminal):
+                        curr_node.add_child(ASTNode(c))
+                    else:
+                        curr_node.add_child(ASTNode(c))
+                        # If the child is a non-terminal, push it onto the stack for further processing.
+                        stack.append(curr_node.children[-1])
+        return root
 
 
 class FirstFollow:
@@ -190,9 +211,9 @@ class FirstFollow:
             for key, value in prev_first.items():
                 prev_first[key] = value.copy()
             for n in self.grammar.non_terminals:
-                for rule in n.rules:
-                    # Calculate possible strings of length k or less from the rule using the current first set.
-                    possible_strings = self.get_possible_strings(rule, k, first)
+                for production in n.productions:
+                    # Calculate possible strings of length k or less from the production using the current first set.
+                    possible_strings = self.get_possible_strings(production, k, first)
                     # Update the first set of the non-terminal by adding the new possible strings.
                     first[n] |= set(possible_strings)
 
@@ -223,14 +244,14 @@ class FirstFollow:
             # Store newly seen non-terminals during this iteration.
             new_seen_non_terminals = []
             for nt in seen_non_terminals:
-                for rule in nt.rules:
-                    for i, c in enumerate(rule):
+                for production in nt.productions:
+                    for i, c in enumerate(production):
                         # Only process non-terminal symbols.
                         if isinstance(c, NonTerminal):
                             # Add the non-terminal to the buffer of newly seen non-terminals.
                             new_seen_non_terminals.append(c)
-                            # Get the symbols following the current non-terminal in the rule.
-                            after = rule[i + 1:]
+                            # Get the symbols following the current non-terminal in the production.
+                            after = production[i + 1:]
                             # Calculate the first set of the string following the current non-terminal.
                             first_of_after = self.concatenate_k(k, [ps[:k] for ps in
                                                                     self.get_possible_strings(after, k, first_k)],
@@ -270,41 +291,41 @@ class FirstFollow:
                 result.add((s1 + s2)[:k])
         return result
 
-    def get_possible_strings(self, rule, k, prev_first_k):
+    def get_possible_strings(self, production, k, prev_first_k):
         possible_strings = []
         queue = deque()
-        # Start with the original rule.
-        queue.append(list(rule))
+        # Start with the original production.
+        queue.append(list(production))
         while queue:
             # Take the first item from the queue for processing.
-            current_rule = queue.popleft()
+            current_production = queue.popleft()
             # Check if the first k symbols are all terminals or empty.
-            if all(isinstance(c, Terminal) for c in current_rule[:k]):
-                if all(nt_c.is_empty() for nt_c in current_rule[:k]):
+            if all(isinstance(c, Terminal) for c in current_production[:k]):
+                if all(nt_c.is_empty() for nt_c in current_production[:k]):
                     # If all symbols are empty, add epsilon to possible strings.
                     possible_strings.append((self.grammar.get_epsilon(),))
                 else:
                     # Add the first k terminals as a possible string.
-                    possible_strings.append(tuple(current_rule[:k]))
+                    possible_strings.append(tuple(current_production[:k]))
                 continue
-            # Iterate through each symbol in the current rule.
-            for i, c in enumerate(current_rule):
+            # Iterate through each symbol in the current production.
+            for i, c in enumerate(current_production):
                 # Process only non-terminal symbols.
                 if isinstance(c, NonTerminal):
-                    # For each possible first set of the non-terminal, create a new rule variant.
+                    # For each possible first set of the non-terminal, create a new production variant.
                     for nt_first in prev_first_k[c]:
-                        new_rule = current_rule.copy()
+                        new_production = current_production.copy()
                         # Check if all symbols in the first set of non-terminal are empty.
                         is_prev_first_empty = all(nt_c.is_empty() for nt_c in nt_first)
                         # Handle empty symbols in non-terminal expansions.
-                        if is_prev_first_empty and len(current_rule) > 1:
-                            # If the first set is empty and rule is not a single symbol, remove the non-terminal.
-                            new_rule[i:i + 1] = []
+                        if is_prev_first_empty and len(current_production) > 1:
+                            # If the first set is empty and production is not a single symbol, remove the non-terminal.
+                            new_production[i:i + 1] = []
                         else:
                             # Replace the non-terminal with its first set.
-                            new_rule[i:i + 1] = nt_first
-                        # Add the new rule variant to the queue for further processing.
-                        queue.append(new_rule)
+                            new_production[i:i + 1] = nt_first
+                        # Add the new production variant to the queue for further processing.
+                        queue.append(new_production)
                     break
         return possible_strings
 
@@ -327,11 +348,11 @@ class ConstructParsingTable:
 
     def construct(self):
         # Construct the parsing table for each non-terminal and its productions.
-        for non_terminal, productions in self.grammar.rules.items():
+        for non_terminal, productions in self.grammar.productions.items():
             for production in productions:
                 # Find the first set for the production.
                 first_production = self._find_first_production(production)
-                # Add rules to the parsing table based on the first set.
+                # Add productions to the parsing table based on the first set.
                 for terminal_tuple in first_production:
                     terminal = terminal_tuple[0]
                     if terminal != Terminal('ε'):
@@ -364,7 +385,7 @@ class ConstructParsingTable:
         return first_production
 
     def _add_to_parsing_table(self, non_terminal, terminal, production):
-        # Add a rule to the parsing table.
+        # Add a production to the parsing table.
         production = [c.text for c in Grammar.get_tnt_string(self.grammar, production)]
         # Check for conflicts in the parsing table.
         if (non_terminal, terminal) not in self.parsing_table:
@@ -375,7 +396,7 @@ class ConstructParsingTable:
     def _process_epsilon(self, non_terminal, production):
         # Process productions that can derive epsilon.
         production = [c.text for c in Grammar.get_tnt_string(self.grammar, production)]
-        # Use the follow set of the non-terminal to add rules for deriving epsilon.
+        # Use the follow set of the non-terminal to add productions for deriving epsilon.
         for terminal in self.follow_sets[NonTerminal(non_terminal)]:
             if (non_terminal, terminal[0]) not in self.parsing_table:
                 self.parsing_table[(non_terminal, terminal[0])] = production
@@ -397,7 +418,7 @@ class LLkAnalyzer:
 
     def parse(self, tokens):
         tokens.append('$')  # Append end marker to the token list
-        applied_rules = []
+        applied_productions = []
         stack = ['$', self.start_symbol]  # Initialize stack with end marker and start symbol
 
         current_token_index = 0
@@ -424,18 +445,18 @@ class LLkAnalyzer:
                     entry = self.parsing_table.get((str(top), Terminal('ε')))
                     #  If an entry is found, it means the non-terminal can be replaced with epsilon
                     if entry is not None:
-                        applied_rules.append((str(top), Terminal('ε'), entry))
+                        applied_productions.append((str(top), Terminal('ε'), entry))
                         for symbol in reversed(entry):
                             if symbol == 'ε':
                                 continue
                             stack.append(self.str_to_sym(symbol))
                         continue
-                # If an entry is found in the parsing table, it means there is a rule that can be applied
+                # If an entry is found in the parsing table, it means there is a production that can be applied
                 # for the current non-terminal (top of the stack) and the current input token.
                 entry = self.parsing_table.get((str(top), tokens[current_token_index]))
                 if entry is not None:
-                    applied_rules.append((str(top), tokens[current_token_index], entry))
-                    # Iterate through the symbols in the found rule in reverse order.
+                    applied_productions.append((str(top), tokens[current_token_index], entry))
+                    # Iterate through the symbols in the found production in reverse order.
                     for symbol in reversed(entry):
                         # If the symbol is epsilon -> we do not need to match any input token,
                         # so we can skip it.
@@ -444,14 +465,14 @@ class LLkAnalyzer:
                         # For other symbols, convert them to terminals or non-terminals and push them onto the stack.
                         stack.append(self.str_to_sym(symbol))
                 else:
-                    # If no entry is found in the parsing table, it means there is no valid rule for the current
-                    raise SyntaxError(f"No rule to parse: {top} with token {tokens[current_token_index]}")
+                    # If no entry is found in the parsing table, it means there is no valid production for the current
+                    raise SyntaxError(f"No production to parse: {top} with token {tokens[current_token_index]}")
             # This condition checks if we have reached the end of the stack.
             elif top == '$':
                 if tokens[current_token_index] == '$':
                     print("Parsing successful!")
                 # If the current token is also the end marker '$', it means the input string
-                # has been successfully parsed according to the grammar rules.
+                # has been successfully parsed according to the grammar productions.
                 else:
                     raise SyntaxError("Unexpected end of input")
 
@@ -461,12 +482,12 @@ class LLkAnalyzer:
         if current_token_index < len(tokens) - 1:
             raise SyntaxError("Input not fully parsed")
 
-        terminalized = []
-        #  Convert applied rules to terminals and non-terminals
-        for rule in applied_rules:
+        terms = []
+        #  Convert applied productions to terminals and non-terminals
+        for production in applied_productions:
             func = lambda x: list(map(self.str_to_sym, x))
-            terminalized.append((func(rule[0]), rule[1], func(rule[2])))
-        return terminalized
+            terms.append((func(production[0]), production[1], func(production[2])))
+        return terms
 
 
 class RecursiveDescentParser:
@@ -486,10 +507,10 @@ class RecursiveDescentParser:
 
     def parse_non_terminal(self, non_terminal):
         save_index = self.index
-        # Try each rule of the non-terminal to see if it matches the tokens
-        for rule in non_terminal.rules:
-            self.index = save_index  # Reset index to try next rule
-            if all(self.parse_symbol(symbol) for symbol in rule):
+        # Try each production of the non-terminal to see if it matches the tokens
+        for production in non_terminal.productions:
+            self.index = save_index  # Reset index to try next production
+            if all(self.parse_symbol(symbol) for symbol in production):
                 return True  # Successful parsing of this non-terminal
         self.index = save_index
         return False  # This non-terminal can't be parsed
@@ -514,6 +535,32 @@ class RecursiveDescentParser:
         return False
 
 
+class ASTNode:
+    def __init__(self, symbol):
+        self.symbol = symbol
+        self.children = []
+
+    def add_child(self, child):
+        self.children.append(child)
+
+    @staticmethod
+    def print_ast(node, prefix="", last=True):
+        # Determine the branching symbol ('└── ' for the last child, '├── ' otherwise)
+        turn = '└── ' if last else '├── '
+        # Print the current node's symbol with the appropriate prefix and branch symbol
+        print(prefix + turn + str(node.symbol))
+        # If this is the last child, add whitespace; otherwise, add a vertical line.
+        prefix += '    ' if last else '│   '
+
+        # Count the number of children of the current node
+        child_count = len(node.children)
+        for i, child in enumerate(node.children):
+            # Determine if the current child is the last in the list of children
+            is_last = i == (child_count - 1)
+            # Recursively call print_ast for each child, updating the prefix and last flag
+            ASTNode.print_ast(child, prefix, last=is_last)
+
+
 def parse_with_control_table(grammar, expression):
     first_follow = FirstFollow(grammar)
     first_k = first_follow.compute_first_k(1)
@@ -529,28 +576,28 @@ def parse_with_control_table(grammar, expression):
     recursive_parser = RecursiveDescentParser(grammar)
     print(f'Recursive Descent Parsing "{expression}": {recursive_parser.parse(expression)}')
     print("Analyzer process:")
-    applied_rules = None
+    applied_productions = None
     try:
         analyzer = LLkAnalyzer(table, grammar)
         tokenized = grammar.get_tnt_string(expression)
-        applied_rules = analyzer.parse(tokenized)
+        applied_productions = analyzer.parse(tokenized)
     except SyntaxError as se:
         print(f"Got an error: {str(se)}")
     except ValueError as ve:
         print(f"Got an error: {str(ve)}")
-    return applied_rules
+    return applied_productions
 
 
 def view_result(grammar, expression):
     first_follow = FirstFollow(grammar)
-    first_k = first_follow.compute_first_k(2)
+    first_k = first_follow.compute_first_k(1)
     follow_k = first_follow.compute_follow_k(1, first_k)
     print("Terminals:")
     print(grammar.terminals)
     print("Non-Terminals:")
     print(grammar.non_terminals)
     print("Epsilon-Producers:")
-    print(grammar.epsilon_producers)
+    print(grammar.nullable_non_terminals)
     print("First(k):")
     for n in grammar.non_terminals:
         print(str(n) + ":")
@@ -559,7 +606,16 @@ def view_result(grammar, expression):
     for n in grammar.non_terminals:
         print(str(n) + ":")
         print(', '.join(''.join(map(str, sym)) for sym in follow_k[n]))
-    parse_with_control_table(grammar, expression)
+    order_of_rules = parse_with_control_table(grammar, expression)
+    if order_of_rules:
+        print("Applied Rules:")
+        for i, rule in enumerate(order_of_rules):
+            print(f"{rule[0]} -> {rule[2]}")
+        print("Abstract Syntax Tree:")
+        root = grammar.build_ast(order_of_rules)
+        ASTNode.print_ast(root)
+    else:
+        print("Impossible to build AST")
 
 
 if __name__ == "__main__":
